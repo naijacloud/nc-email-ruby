@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 2.7 is the declared floor, so it is tested rather than assumed. 3.3 is
+        # the newest we claim to support. The suite needs no network and no
+        # bundle install: minitest and rake ship with Ruby.
+        ruby: ["2.7", "3.0", "3.2", "3.3"]
+
+    name: ruby ${{ matrix.ruby }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: false
+
+      - name: Syntax check every file
+        run: find lib test examples -name '*.rb' -print0 | xargs -0 -n1 ruby -c
+
+      - name: Test
+        run: rake test
+
+      - name: Build the gem
+        run: gem build naijacloud-email.gemspec
