@@ -27,7 +27,15 @@ module NaijaCloud
       # A test key is accepted by the constructor and refused by the send path
       # with 403 -- that refusal is the server's job and is deliberate, so this
       # SDK must not pre-empt it.
-      KEY_PATTERN = /\Anmail_(live|test)_[A-Za-z0-9_-]{8,}\z/.freeze
+      #
+      # Two families, because the API accepts two: `nmail_live_`/`nmail_test_`
+      # is a Naijamail-only key from the Email screen, and `nc_live_` is a
+      # workspace API key carrying the Email send scope, from Settings -> API
+      # keys. It stays an allowlist rather than relaxing to "any non-empty
+      # string": the check exists to catch the truncated paste and the
+      # wrong-variable-name deploy, and a pattern that accepts anything catches
+      # neither.
+      KEY_PATTERN = /\A(?:nmail_(?:live|test)|nc_live)_[A-Za-z0-9_-]{8,}\z/.freeze
 
       # The only hosts allowed to be plaintext, for a developer running the
       # control plane locally. Everything else must be https: a bearer key that
@@ -106,7 +114,8 @@ module NaijaCloud
           # The key itself is never echoed, not even a "got: ..." fragment: this
           # message goes straight into a log on a failed boot.
           raise ValidationError.new(
-            "API key does not look like a Naijamail key (expected nmail_live_... or nmail_test_...)",
+            "API key does not look like a Naijamail key " \
+            "(expected nmail_live_..., nmail_test_... or nc_live_...)",
           )
         end
 

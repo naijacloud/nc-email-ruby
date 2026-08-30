@@ -23,11 +23,29 @@ class ClientTest < NaijamailTest
   end
 
   def test_a_key_of_the_wrong_shape_is_refused_locally
-    ["", "   ", "sk_live_something", "nmail_live_", "nmail_live_short", "nmail_prod_abcdefghij"].each do |key|
+    bad_keys = [
+      "", "   ", "sk_live_something", "nmail_live_", "nmail_live_short", "nmail_prod_abcdefghij",
+      # The pre-scopes platform token. The API refuses it on the mail routes
+      # outright -- it predates the Email send scope and was never granted mail
+      # access -- so it fails here rather than at send time.
+      "nc_pat_0123456789abcdef",
+      # There is no test variant of a workspace key.
+      "nc_test_0123456789abcdef"
+    ]
+    bad_keys.each do |key|
       assert_raises(NaijaCloud::Email::ValidationError, "expected #{key.inspect} to be refused") do
         NaijaCloud::Email::Client.new(api_key: key, base_url: @server.base_url)
       end
     end
+  end
+
+  def test_a_workspace_api_key_is_accepted
+    # A key from Settings -> API keys, carrying the Email send scope.
+    client = NaijaCloud::Email::Client.new(
+      api_key: "nc_live_0123456789abcdefghij", base_url: @server.base_url
+    )
+
+    refute_nil client.emails
   end
 
   def test_a_test_key_is_accepted_by_the_constructor
@@ -198,6 +216,10 @@ class ClientTest < NaijamailTest
   def test_redact_key
     assert_equal "nmail_live_***", NaijaCloud::Email.redact_key("nmail_live_abcdefghij")
     assert_equal "nmail_test_***", NaijaCloud::Email.redact_key("nmail_test_abcdefghij")
+    # Without the second family here a workspace key falls through to the bare
+    # "***", and an operator reading a dump loses the one useful signal: which
+    # kind of credential this process is holding.
+    assert_equal "nc_live_***", NaijaCloud::Email.redact_key("nc_live_abcdefghij")
     assert_equal "***", NaijaCloud::Email.redact_key("something-else")
     assert_equal "***", NaijaCloud::Email.redact_key(nil)
   end

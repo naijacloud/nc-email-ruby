@@ -15,7 +15,7 @@ module NaijaCloud
     def self.redact_key(key)
       return "***" unless key.is_a?(String)
 
-      match = key.match(/\Anmail_(live|test)_/)
+      match = key.match(/\A(?:nmail_(?:live|test)|nc_live)_/)
       match ? "#{match[0]}***" : "***"
     end
   end
