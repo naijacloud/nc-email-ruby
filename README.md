@@ -57,10 +57,9 @@ Ruby 2.7 or newer.
 
 ## The API surface
 
-The control plane has exactly two endpoints, so the SDK has exactly two methods.
-There is no `domains`, `api_keys`, `batch` or `contacts` resource: those exist in
-other vendors' SDKs and not in ours, because a method that returns 404 for
-everyone is worse than no method.
+This release wraps two endpoints, send and retrieve. The API also has batch send,
+a message list, limits, domains and suppressions
+([API docs](https://naijacloud.com/docs/api/email)); they are not wrapped yet.
 
 | | |
 | --- | --- |
@@ -169,9 +168,13 @@ Two kinds work, and the SDK cannot tell them apart once it has one:
   credential CI deploys with. Add **Platform API** as well if the key also needs
   to manage sending domains or suppressions.
 - **`nmail_live_…` / `nmail_test_…`** — a Naijamail-only key from **Email**. The
-  test variant is refused by the send path with a `403`, on purpose, so a
-  staging box holding production credentials fails loudly instead of mailing
-  real customers. There is no test variant of a workspace key.
+  test variant is **sandboxed**: the API accepts the send, returns a real id
+  and a final status, and never hands the message to a mail server. Use one in
+  staging and CI. Send from any domain you have added, or from
+  `…@test.mail.naijacloud.dev`; send *to* `delivered@`, `bounced@` or
+  `complained@test.mail.naijacloud.dev` to get that outcome. A message sent
+  this way comes back from `get` with `sandbox` set to true. There is no test
+  variant of a workspace key.
 
 An `nc_pat_…` platform token is not accepted: those predate the Email send scope
 and the API refuses them on the mail routes, so the SDK refuses them at
@@ -192,7 +195,7 @@ Every failure is a `NaijaCloud::Email::Error`, so one `rescue` covers the lot:
 begin
   nm.emails.send_email(from: "...", to: "...", subject: "Hi", html: "<p>Hi</p>")
 rescue NaijaCloud::Email::PermissionError => e
-  # Unverified domain, a test key on the live send path, or a quota.
+  # Unverified domain, a key without the right scope, or a quota.
   warn "#{e.message} (request #{e.request_id})"
 rescue NaijaCloud::Email::RateLimitError => e
   warn "rate limited, retry after #{e.retry_after}s"

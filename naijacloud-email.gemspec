@@ -11,7 +11,7 @@ Gem::Specification.new do |spec|
   spec.summary     = "Ruby SDK for Naijamail, the Naija Cloud transactional email API."
   spec.description = "Send and retrieve transactional email through the Naijamail API. " \
                      "No runtime dependencies: standard-library net/http only."
-  spec.homepage = "https://github.com/naija-cloud/nc-email-ruby"
+  spec.homepage = "https://github.com/naijacloud/nc-email-ruby"
   spec.license  = "MIT"
 
   # 2.7 is the floor because that is what the oldest supported customer app in
@@ -24,7 +24,7 @@ Gem::Specification.new do |spec|
     "source_code_uri" => spec.homepage,
     "changelog_uri" => "#{spec.homepage}/blob/main/CHANGELOG.md",
     "bug_tracker_uri" => "#{spec.homepage}/issues",
-    "documentation_uri" => "https://www.naijacloud.com/docs/email",
+    "documentation_uri" => "https://naijacloud.com/docs/api/email",
     # This gem is installed into processes that hold live sending keys, so an
     # account takeover on a maintainer would be a supply-chain incident for every
     # customer using it. Publishing requires a second factor.
