@@ -66,6 +66,16 @@ module NaijaCloud
       end
       alias to_s inspect
 
+      # The same for dumps. YAML.dump(client.emails) reaches this object, and
+      # Psych writes every instance variable unless encode_with says otherwise.
+      def marshal_dump
+        raise Error.new("a NaijaCloud::Email::Transport holds an API key and must not be serialized")
+      end
+
+      def encode_with(_coder)
+        raise Error.new("a NaijaCloud::Email::Transport holds an API key and must not be serialized")
+      end
+
       private
 
       def execute(method, path, body, extra_headers)
@@ -219,7 +229,9 @@ module NaijaCloud
         when 404 then NotFoundError.new(message, **common)
         when 408 then TimeoutError.new(message, **common)
         when 409 then ConflictError.new(message, **common)
-        when 422 then ValidationError.new(message, **common)
+        # 413 is the server's body parser refusing an oversized request: the
+        # caller's input, and no retry will shrink it.
+        when 413, 422 then ValidationError.new(message, **common)
         when 429 then RateLimitError.new(message, retry_after: retry_after, **common)
         else
           if status >= 500

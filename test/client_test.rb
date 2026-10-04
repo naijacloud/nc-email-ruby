@@ -186,6 +186,22 @@ class ClientTest < NaijamailTest
     assert_raises(NaijaCloud::Email::Error) { Marshal.dump(client) }
   end
 
+  def test_a_client_refuses_to_be_dumped_as_yaml
+    # Psych ignores marshal_dump and walks instance variables down to the key.
+    require "yaml"
+    secret = "nmail_live_needle0000000000"
+    client = NaijaCloud::Email::Client.new(api_key: secret, base_url: @server.base_url)
+
+    [client, client.emails].each do |object|
+      dumped = begin
+        YAML.dump(object)
+      rescue NaijaCloud::Email::Error
+        ""
+      end
+      refute_includes dumped, "needle", "YAML.dump(#{object.class}) wrote the key"
+    end
+  end
+
   def test_two_clients_do_not_share_state
     # No class-level configuration anywhere: two teams' keys in one process must
     # not be able to borrow each other's credential.
