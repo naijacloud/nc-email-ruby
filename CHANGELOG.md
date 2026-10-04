@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-04
+
+The first version published to RubyGems (`gem install naijacloud-email`).
+0.1.0 was written up here but never pushed, so its entries below are part of
+this release too.
+
 ### Added
 
 - Accept a workspace API key (`nc_live_…`) alongside the Naijamail keys. It is
@@ -29,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Test keys (`nmail_test_…`) are sandboxed by the API, not refused with a 403.
   The README said otherwise.
 
-## [0.1.0] - 2026-08-29
+## 0.1.0 - 2026-08-29 (never published)
 
 First release. Implements the Naijamail SDK contract for Ruby.
 
@@ -60,5 +66,5 @@ First release. Implements the Naijamail SDK contract for Ruby.
   redirect following, key redaction, header-injection rejection, forbidden
   header names, client-side limits and bytes-only attachments.
 
-[Unreleased]: https://github.com/naijacloud/nc-email-ruby/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/naijacloud/nc-email-ruby/releases/tag/v0.1.0
+[Unreleased]: https://github.com/naijacloud/nc-email-ruby/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/naijacloud/nc-email-ruby/releases/tag/v0.2.0
