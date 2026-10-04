@@ -21,6 +21,8 @@ class ErrorsTest < NaijamailTest
       404 => NaijaCloud::Email::NotFoundError,
       408 => NaijaCloud::Email::TimeoutError,
       409 => NaijaCloud::Email::ConflictError,
+      # The body parser refusing an oversized request: the caller's input.
+      413 => NaijaCloud::Email::ValidationError,
       422 => NaijaCloud::Email::ValidationError,
       429 => NaijaCloud::Email::RateLimitError,
       500 => NaijaCloud::Email::ServerError,

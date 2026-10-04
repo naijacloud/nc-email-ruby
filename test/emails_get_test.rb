@@ -122,4 +122,26 @@ class EmailsGetTest < NaijamailTest
 
     assert_equal 0, @server.request_count
   end
+
+  def sandbox_body(extra = {})
+    {
+      "id" => "1", "to" => "x@y.com", "from" => "a@acme.com", "subject" => "Hi",
+      "status" => "bounced", "created_at" => "2026-08-29T10:00:00.000Z",
+      "opened" => false, "clicked" => false,
+    }.merge(extra)
+  end
+
+  def test_exposes_the_sandbox_flag
+    # A test-key message is never sent; a "bounced" one is simulated, and
+    # without the flag it reads exactly like a real bounce.
+    @server.enqueue(status: 200, body: sandbox_body("sandbox" => true))
+    email = @client.emails.get("1")
+    assert email.sandbox?
+    assert_equal true, email.sandbox
+  end
+
+  def test_sandbox_defaults_to_false
+    @server.enqueue(status: 200, body: sandbox_body)
+    refute @client.emails.get("1").sandbox?
+  end
 end

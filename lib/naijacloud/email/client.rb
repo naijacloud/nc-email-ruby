@@ -96,6 +96,12 @@ module NaijaCloud
         raise Error.new("a NaijaCloud::Email::Client holds an API key and must not be serialized")
       end
 
+      # Psych does not use marshal_dump: it walks instance variables, down
+      # @http to the key. encode_with is the hook it does call.
+      def encode_with(_coder)
+        raise Error.new("a NaijaCloud::Email::Client holds an API key and must not be serialized")
+      end
+
       private
 
       def resolve_api_key(api_key)

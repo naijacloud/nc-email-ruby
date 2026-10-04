@@ -110,7 +110,7 @@ module NaijaCloud
     # got back from the send is the first of them.
     class Email < BaseObject
       attr_reader :id, :to, :from, :subject, :status, :created_at, :delivered_at,
-                  :opened, :clicked, :failure_reason
+                  :opened, :clicked, :failure_reason, :sandbox
 
       def self.from_hash(hash)
         hash = {} unless hash.is_a?(::Hash)
@@ -130,6 +130,13 @@ module NaijaCloud
         @clicked        = raw["clicked"]
         # Present only on a failure, so its absence is the normal case.
         @failure_reason = raw["failure_reason"]
+        # True for a message sent with a test key (nmail_test_...): recorded,
+        # never handed to a mail server, so a "bounced" one is simulated.
+        @sandbox        = raw["sandbox"] == true
+      end
+
+      def sandbox?
+        @sandbox
       end
 
       def opened?

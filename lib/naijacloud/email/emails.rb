@@ -339,6 +339,15 @@ module NaijaCloud
       # The server truncates an over-long tag. This rejects instead: a tag is an
       # analytics label, and a truncated key that silently stops matching the
       # dashboard query a customer built on it is a bug they will never find.
+      # The server truncates tags by JavaScript's `.length`, which counts UTF-16
+      # units: an emoji is 2 there and 1 in String#length. Counting the same way
+      # keeps "reject, never truncate" true for every tag that gets past here.
+      def utf16_length(text)
+        text.encode(Encoding::UTF_16LE).bytesize / 2
+      rescue EncodingError
+        text.length
+      end
+
       def build_tags(raw)
         return {} if raw.nil?
         raise ValidationError.new("tags must be a Hash of strings") unless raw.is_a?(Hash)
@@ -350,10 +359,10 @@ module NaijaCloud
           unless value.is_a?(String)
             raise ValidationError.new("tag #{key.inspect} must have a string value")
           end
-          if key.length > MAX_TAG_KEY_LEN
+          if utf16_length(key) > MAX_TAG_KEY_LEN
             raise ValidationError.new("tag key #{key.inspect} is over #{MAX_TAG_KEY_LEN} characters")
           end
-          if value.length > MAX_TAG_VALUE_LEN
+          if utf16_length(value) > MAX_TAG_VALUE_LEN
             raise ValidationError.new("tag #{key.inspect} value is over #{MAX_TAG_VALUE_LEN} characters")
           end
 

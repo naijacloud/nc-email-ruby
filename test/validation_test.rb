@@ -172,4 +172,23 @@ class ValidationTest < NaijamailTest
     assert_raises(NaijaCloud::Email::ValidationError) { @client.emails.send_email("just a string") }
     assert_equal 0, @server.request_count
   end
+
+  def test_tag_length_is_counted_in_the_units_the_server_truncates_by
+    # The server truncates at 64/256 JavaScript (UTF-16) units; an emoji is two.
+    emoji = "\u{1F600}"
+    [{ (emoji * 33) => "v" }, { "k" => emoji * 129 }].each do |tags|
+      assert_raises(NaijaCloud::Email::ValidationError) do
+        @client.emails.send_email(from: "a@acme.com", to: "b@example.com", subject: "Hi",
+                                  text: "x", tags: tags)
+      end
+    end
+    assert_equal 0, @server.request_count
+  end
+
+  def test_accented_tags_within_the_limit_still_pass
+    @server.enqueue(status: 202, body: { "id" => "1", "status" => "queued" })
+    @client.emails.send_email(from: "a@acme.com", to: "b@example.com", subject: "Hi",
+                              text: "x", tags: { ("\u1ecd\u0300" * 30) => "\u00e9" * 250 })
+    assert_equal 1, @server.request_count
+  end
 end
