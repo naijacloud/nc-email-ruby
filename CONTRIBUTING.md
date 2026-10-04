@@ -67,7 +67,24 @@ review. `# frozen_string_literal: true` at the top of every file.
 
 ## Releasing
 
+Releases come from CI, on a tag, with RubyGems trusted publishing: the gemspec
+requires MFA to push, and the short-lived key the workflow gets from
+rubygems.org is what satisfies that without anyone typing a code.
+
 1. Update `lib/naijacloud/email/version.rb`.
-2. Add a `CHANGELOG.md` entry (Keep a Changelog).
-3. `gem build naijacloud-email.gemspec`
-4. `gem push naijacloud-email-<version>.gem` (MFA required).
+2. Move the `Unreleased` changelog entries under `## [x.y.z] - YYYY-MM-DD` and
+   update the link definitions at the foot of the file.
+3. Tag and push: `git tag v<version> && git push origin v<version>`.
+
+`.github/workflows/release.yml` runs the CI matrix, refuses a tag that disagrees
+with `VERSION` or has no changelog section, builds and pushes the gem, then
+creates the GitHub release from the changelog section.
+
+### One-time setup
+
+- **rubygems.org → Settings → Trusted publishers → Create a pending trusted
+  publisher** (before the first push; afterwards it is on the gem's own page):
+  gem name `naijacloud-email`, repository owner `naijacloud`, repository
+  `nc-email-ruby`, workflow `release.yml`, environment `rubygems`.
+- **GitHub → Settings → Environments → New environment `rubygems`.** Add
+  required reviewers to make a push wait for a human.
