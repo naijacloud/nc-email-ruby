@@ -43,6 +43,20 @@ module NaijaCloud
       # clear, and "it was only staging" is how it gets there.
       LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1"].freeze
 
+      # More retries than this only stretches an outage into a hang: with the
+      # 8s backoff cap and a 30s per-attempt deadline, ten retries is already
+      # minutes of a caller blocked on one send.
+      MAX_RETRIES_LIMIT = 10
+
+      # The platform's pre-scope personal access token. The API refuses it on the
+      # mail routes; saying so here beats "not shaped like a key" (it is a real
+      # NaijaCloud credential, just the wrong kind). Wording fixed by SDK
+      # contract section 1, identical in all five SDKs.
+      PAT_PREFIX  = "nc_pat_"
+      PAT_MESSAGE = "this is a personal access token (nc_pat_…), which cannot send mail; " \
+                    "use a mail API key (nmail_live_… or nmail_test_…) or a workspace API key " \
+                    "with the Email send scope (nc_live_…)"
+
       attr_reader :base_url, :timeout, :max_retries, :user_agent
 
       def initialize(api_key: nil, base_url: nil, timeout: 30, max_retries: 2, user_agent_suffix: nil)
@@ -116,6 +130,8 @@ module NaijaCloud
             "no API key. Pass api_key: to the constructor or set #{API_KEY_ENV} in the environment.",
           )
         end
+        raise ValidationError.new(PAT_MESSAGE) if key.is_a?(String) && key.start_with?(PAT_PREFIX)
+
         unless key.is_a?(String) && key =~ KEY_PATTERN
           # The key itself is never echoed, not even a "got: ..." fragment: this
           # message goes straight into a log on a failed boot.
@@ -129,7 +145,12 @@ module NaijaCloud
       end
 
       def resolve_base_url(base_url)
-        raw = base_url || ENV[BASE_URL_ENV] || DEFAULT_BASE_URL
+        # A blank NAIJAMAIL_BASE_URL (an empty `export` in a deploy config) means
+        # "not set", not "invalid": the default applies, as in every other SDK.
+        env = ENV[BASE_URL_ENV]
+        env = nil if env.nil? || env.strip.empty?
+
+        raw = base_url || env || DEFAULT_BASE_URL
         raw = raw.to_s.strip
 
         uri =
@@ -143,8 +164,17 @@ module NaijaCloud
           raise ValidationError.new("base_url must be an absolute http(s) URL, got #{raw.inspect}")
         end
 
-        # URI keeps the brackets on an IPv6 literal, so ::1 arrives as "[::1]".
-        host = uri.host.sub(/\A\[/, "").sub(/\]\z/, "").downcase
+        # A query or fragment would sit after every path this client appends, so
+        # the request would go somewhere other than where the caller thinks.
+        # Refused rather than stripped: silently dropping part of a configured
+        # URL hides a configuration mistake.
+        if uri.query || uri.fragment
+          raise ValidationError.new("base_url must not contain a query string or a fragment")
+        end
+
+        # URI#host keeps the brackets on an IPv6 literal ("[::1]"); #hostname
+        # strips them.
+        host = uri.hostname.downcase
 
         if uri.scheme != "https" && !LOCAL_HOSTS.include?(host)
           raise ValidationError.new(
@@ -165,8 +195,8 @@ module NaijaCloud
       end
 
       def validate_max_retries(max_retries)
-        unless max_retries.is_a?(Integer) && max_retries >= 0
-          raise ValidationError.new("max_retries must be an Integer of 0 or more")
+        unless max_retries.is_a?(Integer) && max_retries >= 0 && max_retries <= MAX_RETRIES_LIMIT
+          raise ValidationError.new("max_retries must be an Integer from 0 to #{MAX_RETRIES_LIMIT}")
         end
 
         max_retries

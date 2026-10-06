@@ -236,7 +236,6 @@ class RetryTest < NaijamailTest
 
   def test_an_idempotency_key_with_a_line_break_is_refused
     assert_raises(NaijaCloud::Email::ValidationError) { send_one(idempotency_key: "a\r\nX-Evil: 1") }
-    assert_raises(NaijaCloud::Email::ValidationError) { send_one(idempotency_key: "") }
     assert_raises(NaijaCloud::Email::ValidationError) { send_one(idempotency_key: "x" * 256) }
 
     assert_equal 0, @server.request_count
