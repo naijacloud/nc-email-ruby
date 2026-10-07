@@ -37,10 +37,10 @@ class ErrorsTest < NaijamailTest
     end
   end
 
-  def test_an_unmapped_4xx_is_the_base_error
+  def test_an_unmapped_4xx_is_a_validation_error
     @server.enqueue(status: 418, body: error_body(418, "I'm a teapot"))
 
-    error = assert_raises(NaijaCloud::Email::Error) { send_one }
+    error = assert_raises(NaijaCloud::Email::ValidationError) { send_one }
 
     assert_equal 418, error.status_code
     assert_equal "I'm a teapot", error.message

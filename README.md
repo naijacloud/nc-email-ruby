@@ -68,6 +68,11 @@ a message list, limits, domains and suppressions
 | `nm.emails.get(id)` | `GET /v1/emails/{id}`, returns `Email` |
 | `NaijaCloud::Email::Webhooks.verify(...)` | verifies a signed webhook delivery |
 
+`Email#created_at` and `#delivered_at` are the ISO-8601 **Strings** the server
+sent (`delivered_at` is `nil` until delivery); `#created_at_time` and
+`#delivered_at_time` parse them into `Time` on demand. Other SDKs surface a
+native date type here — that difference is deliberate, not a bug.
+
 `send_email`, not `send`: `send` is `Object#send`, and shadowing it on a resource
 object means anything that dispatches by name against it — including some mocking
 libraries — tries to mail a message instead.
@@ -89,10 +94,10 @@ nm.emails.send_email({ from: "...", to: "...", subject: "Hi" })
 | `reply_to:` | String or Array | Sent on the wire as `reply_to`. |
 | `subject:` | String | Always sent; defaults to `""`. |
 | `html:`, `text:` | String | |
-| `headers:` | Hash | At most 25. `From`, `To`, `Cc`, `Bcc`, `Subject`, `DKIM-Signature` and `Received` are refused. |
-| `attachments:` | Array of Hashes | `{ filename:, content:, content_type:, content_id: }` |
+| `headers:` | Hash | At most 25. `From`, `To`, `Cc`, `Bcc`, `Subject`, `DKIM-Signature` and `Received` are refused, matched case-insensitively on the name with surrounding whitespace trimmed (`" From"` is refused too). |
+| `attachments:` | Array of Hashes | `{ filename:, content:, content_type:, content_id: }`. `content` is a String of **raw bytes**; it must not be empty. |
 | `tags:` | Hash | At most 10, key ≤ 64 chars, value ≤ 256. |
-| `idempotency_key:` | String | Optional; one is generated per call if you do not pass one. |
+| `idempotency_key:` | String | Optional; one is generated per call if you do not pass one, or pass an empty one. At most 255 bytes of UTF-8. Sent as the `Idempotency-Key` header only. |
 
 An unknown option raises `ValidationError` rather than being dropped, so
 `htlm:` fails on your machine instead of sending a blank email to a customer.
@@ -114,6 +119,14 @@ nm.emails.send_email(
   ],
 )
 ```
+
+`content` is always taken as raw bytes — in Ruby the String *is* the byte type
+(`File.binread`, `IO#read` in binary mode). It is never interpreted as base64: a
+String you have already base64-encoded is sent as those characters, encoded a
+second time. (The SDKs for languages with a separate byte type — Node, Python,
+Go — read a text string as base64; Ruby and PHP cannot tell the two apart, so
+they do not try.) An empty attachment is refused locally, as the server would
+refuse it.
 
 The SDK never opens a file on your behalf. An SDK that reads whatever path it is
 handed becomes a local-file-disclosure primitive the moment a web handler passes
@@ -153,11 +166,20 @@ client should assume otherwise.
 nm = NaijaCloud::Email::Client.new(
   api_key: ENV["NAIJAMAIL_API_KEY"],   # default: ENV["NAIJAMAIL_API_KEY"]
   base_url: nil,                       # default: ENV["NAIJAMAIL_BASE_URL"] or https://api.naijacloud.com
-  timeout: 30,                         # seconds, per attempt
-  max_retries: 2,                      # 3 attempts in total
+  timeout: 30,                         # seconds, per attempt; must be > 0
+  max_retries: 2,                      # 3 attempts in total; 0 to 10
   user_agent_suffix: "acme-billing/2.1",
 )
 ```
+
+- `timeout` is a deadline on the **whole attempt** — connect, send and reading
+  the entire response — not a per-socket-read timeout, so a server trickling a
+  byte at a time cannot hold a request open past it. Each retry gets a fresh one.
+- A blank `NAIJAMAIL_BASE_URL` (set but empty) counts as unset.
+- A `base_url` with a query string or fragment is refused: every path the SDK
+  appends would land after it.
+- The key is trimmed of surrounding whitespace (a trailing newline from a secrets
+  file is common) before it is checked.
 
 ### Which key
 
@@ -178,7 +200,10 @@ Two kinds work, and the SDK cannot tell them apart once it has one:
 
 An `nc_pat_…` platform token is not accepted: those predate the Email send scope
 and the API refuses them on the mail routes, so the SDK refuses them at
-construction rather than a request later.
+construction rather than a request later, with a message saying so — "this is a
+personal access token (nc_pat_…), which cannot send mail; use a mail API key
+(nmail_live_… or nmail_test_…) or a workspace API key with the Email send scope
+(nc_live_…)".
 
 Everything lives on the instance. There is no global configuration, so two
 clients holding two teams' keys can run in one process without one borrowing the
@@ -212,17 +237,21 @@ end
 | 404 | `NotFoundError` | no |
 | 408 | `TimeoutError` | yes |
 | 409 | `ConflictError` | no |
-| 422 | `ValidationError` | no |
+| 413, 422 | `ValidationError` | no |
+| any other 4xx (405, 415, 451…) | `ValidationError` | no |
 | 429 | `RateLimitError` (`#retry_after`) | yes |
 | 5xx | `ServerError` | yes |
 | 3xx | `ServerError` ("unexpected redirect") | no |
+| 2xx that is not a JSON object, or a send response with no `id` | `ServerError` ("malformed response") | no |
 | socket / DNS / TLS | `ConnectionError` | yes |
 | client-side deadline | `TimeoutError` | yes |
 | bad input, caught locally | `ValidationError`, `status_code == 0` | n/a |
 
 Every error carries `message`, `status_code`, `error_label` (the server's short
-label), `request_id` (from `x-request-id`) and the raw `body`. Quote the
-`request_id` in a support ticket.
+label), `request_id` (from `x-request-id`), the response text exactly as received
+(`raw_body`, also available as `body`) and that text parsed as JSON
+(`parsed_body`, `nil` when it was not JSON). Quote the `request_id` in a support
+ticket.
 
 A `400` for an id that does not exist is a known control-plane quirk — the
 retrieve endpoint raises `BadRequestException('message not found')` instead of a
@@ -233,8 +262,9 @@ when the server is fixed.
 
 Three attempts by default, with full-jitter exponential backoff — `base` 500ms,
 `cap` 8s — retried only on `429`, `408`, `5xx`, and connection or timeout
-failures. A `Retry-After` header (integer seconds or an HTTP date) overrides the
-computed backoff and is clamped to 60 seconds.
+failures. A `Retry-After` header (integer seconds or an HTTP date) on any
+retried response — a `429` or a `503` alike — overrides the computed backoff and
+is clamped to 60 seconds; `RateLimitError#retry_after` reports the clamped value.
 
 A `403` on an unverified domain is never retried. It will not become verified
 between two attempts, and retrying only burns your rate limit.
@@ -259,9 +289,11 @@ The full list is in [SECURITY.md](SECURITY.md). In short:
   as one of its own instance variables. There is no verbose mode, because a
   verbose mode is a way to print an `Authorization` header.
 - **Header injection is rejected locally** — a `\r`, `\n` or NUL in `from`, any
-  address, `subject`, a custom header name or value, or an attachment filename.
+  address, `subject`, a custom header name or value, or an attachment
+  filename, `content_type` or `content_id`.
 - **Limits are checked before the round trip**: 50 recipients, 25 headers, 10
-  tags, 10 MiB encoded.
+  tags, and 10 MiB of message — measured as the server measures it: the UTF-8
+  bytes of `html` and `text` plus the raw (not base64) attachment bytes.
 - **Webhook signatures are compared in constant time.**
 
 ## Webhooks
@@ -299,8 +331,12 @@ is to stop verifying. `Webhooks.verify` refuses a Hash outright for this reason.
 
 Header format: `NC-Signature: t=1756468800,v1=<hex sha256 hmac>`. The signed
 payload is `"<t>.<raw body>"`, HMAC-SHA256 with the endpoint secret, hex
-lowercase. The default replay tolerance is 300 seconds (`tolerance:`). Several
-`v1=` values may appear at once during a secret rotation; any match is accepted.
+lowercase (the verifier accepts either case). The default replay tolerance is 300
+seconds (`tolerance:`); `0` is strict (only the current second passes), and a
+negative or non-numeric tolerance raises `ValidationError`. `t` must be 1–12
+ASCII digits. A payload that verifies but is not a JSON object (an array, say)
+raises `WebhookVerificationError`. Several `v1=` values may appear at once during
+a secret rotation; any match is accepted.
 
 ## Local development against a dev control plane
 

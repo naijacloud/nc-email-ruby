@@ -30,8 +30,9 @@ class MockServer
     500 => "Internal Server Error", 502 => "Bad Gateway", 503 => "Service Unavailable"
   }.freeze
 
-  def initialize
-    @server   = TCPServer.new("127.0.0.1", 0)
+  def initialize(host: "127.0.0.1")
+    @host     = host
+    @server   = TCPServer.new(host, 0)
     @queue    = []
     @requests = []
     @mutex    = Mutex.new
@@ -45,7 +46,7 @@ class MockServer
   end
 
   def base_url
-    "http://127.0.0.1:#{port}"
+    @host.include?(":") ? "http://[#{@host}]:#{port}" : "http://#{@host}:#{port}"
   end
 
   # Script one response. `body` may be a Hash (encoded as JSON) or a raw String,
@@ -54,10 +55,12 @@ class MockServer
   # client-side deadline gets tested without waiting 30 seconds for the default.
   # `raw` writes the given bytes to the socket instead of a well-formed
   # response, which is how a proxy answering with garbage gets tested.
-  def enqueue(status: 200, body: "", headers: {}, hang: nil, raw: nil)
+  # `trickle` sends the headers at once and then the body one byte every
+  # `trickle` seconds -- a response no single socket read ever times out on.
+  def enqueue(status: 200, body: "", headers: {}, hang: nil, raw: nil, trickle: nil)
     body = JSON.generate(body) unless body.is_a?(String)
     @mutex.synchronize do
-      @queue << { status: status, body: body, headers: headers, hang: hang, raw: raw }
+      @queue << { status: status, body: body, headers: headers, hang: hang, raw: raw, trickle: trickle }
     end
     self
   end
@@ -165,7 +168,15 @@ class MockServer
     lines << "Connection: close"
 
     socket.write(lines.join("\r\n") + "\r\n\r\n")
-    socket.write(body)
+    if response[:trickle]
+      body.each_char do |char|
+        socket.write(char)
+        socket.flush
+        sleep(response[:trickle])
+      end
+    else
+      socket.write(body)
+    end
   end
 end
 

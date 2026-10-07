@@ -11,15 +11,25 @@ module NaijaCloud
     # to report and pretending otherwise would send someone hunting through
     # server logs for a request that never arrived.
     class Error < StandardError
-      attr_reader :status_code, :error_label, :request_id, :body
+      # `body` / `raw_body`: the response text exactly as received (nil for a
+      # local error). `parsed_body`: that text decoded as JSON, or nil when it
+      # was not JSON. Both are always available, so a caller never has to
+      # re-parse or guess which one they were handed.
+      attr_reader :status_code, :error_label, :request_id, :body, :parsed_body
 
-      def initialize(message, status_code: 0, error_label: nil, request_id: nil, body: nil, retryable: nil)
+      def initialize(message, status_code: 0, error_label: nil, request_id: nil, body: nil,
+                     parsed_body: nil, retryable: nil)
         super(message)
         @status_code = status_code
         @error_label = error_label
         @request_id  = request_id
         @body        = body
+        @parsed_body = parsed_body
         @retryable   = retryable
+      end
+
+      def raw_body
+        @body
       end
 
       # Advisory, for callers that queue their own work. The transport does not
@@ -42,7 +52,8 @@ module NaijaCloud
       end
     end
 
-    # 400/422, and anything the SDK refuses to put on the wire at all.
+    # 400/413/422 and any other unmapped 4xx, and anything the SDK refuses to
+    # put on the wire at all.
     class ValidationError < Error; end
 
     # 401. Missing, malformed, unknown or revoked key -- the server deliberately

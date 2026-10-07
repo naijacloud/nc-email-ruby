@@ -5,6 +5,7 @@ require "uri"
 require "json"
 require "openssl"
 require "time"
+require "timeout"
 
 module NaijaCloud
   module Email
@@ -27,6 +28,11 @@ module NaijaCloud
 
       RETRYABLE_STATUSES = [408, 429].freeze
 
+      # Raised by the per-attempt deadline. Its own class so it cannot be
+      # confused with a Timeout::Error raised by anything else, and so it is
+      # rescued exactly where the deadline is set.
+      class AttemptDeadline < StandardError; end
+
       # Test seams. Overridden by the suite so retry timing is asserted rather
       # than waited out; there is no public constructor option for them because a
       # caller who can replace `sleep` can turn the backoff into a hot loop
@@ -46,12 +52,16 @@ module NaijaCloud
       # `body` arrives already serialized: the caller has to measure the encoded
       # payload against the 10 MiB limit anyway, and serializing a 10 MiB body
       # twice to avoid passing a String is a poor trade.
-      def post(path, body, extra_headers = {})
-        execute(:post, path, body, extra_headers)
+      #
+      # `require_string`: a key the 2xx body must carry as a non-empty String
+      # (the send response's `id`). A success without it is a malformed
+      # response, raised as ServerError and not retried.
+      def post(path, body, extra_headers = {}, require_string: nil)
+        execute(:post, path, body, extra_headers, require_string)
       end
 
       def get(path, extra_headers = {})
-        execute(:get, path, nil, extra_headers)
+        execute(:get, path, nil, extra_headers, nil)
       end
 
       # The key lives in this object, so both of these are overridden. Ruby prints
@@ -78,7 +88,7 @@ module NaijaCloud
 
       private
 
-      def execute(method, path, body, extra_headers)
+      def execute(method, path, body, extra_headers, require_string)
         attempt = 0
 
         loop do
@@ -90,12 +100,12 @@ module NaijaCloud
             response = perform(method, path, body, extra_headers)
             status   = response.code.to_i
 
-            return decode_success(response, status) if status >= 200 && status < 300
+            return decode_success(response, status, require_string) if status >= 200 && status < 300
 
             retry_after = parse_retry_after(response["retry-after"])
             error       = build_error(response, status, retry_after)
             retryable   = retryable_status?(status)
-          rescue Net::OpenTimeout, Net::ReadTimeout, Net::WriteTimeout, Timeout::Error => e
+          rescue AttemptDeadline, Net::OpenTimeout, Net::ReadTimeout, Net::WriteTimeout, Timeout::Error => e
             # A client-side deadline. The request may well have reached the
             # server, which is why every send carries an idempotency key before
             # the first attempt rather than after the first failure.
@@ -119,10 +129,23 @@ module NaijaCloud
         end
       end
 
+      # One attempt, bounded by one deadline covering connect, write and the
+      # whole response read. net/http's own timeouts are per socket operation, so
+      # a server trickling a byte every few seconds would never trip
+      # read_timeout and could hold a caller for ever; the outer deadline is what
+      # makes `timeout` mean "this attempt takes at most N seconds".
       def perform(method, path, body, extra_headers)
+        Timeout.timeout(@timeout, AttemptDeadline) do
+          perform_attempt(method, path, body, extra_headers)
+        end
+      end
+
+      def perform_attempt(method, path, body, extra_headers)
         uri = request_uri(path)
 
-        http = Net::HTTP.new(uri.host, uri.port)
+        # #hostname, not #host: #host keeps the brackets on an IPv6 literal, and
+        # Net::HTTP would then try to resolve "[::1]" and never connect.
+        http = Net::HTTP.new(uri.hostname, uri.port)
         http.use_ssl = uri.scheme == "https"
         # Set explicitly rather than relying on the default. OpenSSL's ambient
         # configuration can be changed by anything else loaded in the process, and
@@ -172,16 +195,32 @@ module NaijaCloud
         uri
       end
 
-      def decode_success(response, status)
+      def decode_success(response, status, require_string)
         parsed = parse_json(response.body)
-        return parsed if parsed.is_a?(Hash)
 
-        raise ServerError.new(
-          "expected a JSON object from the API, got #{status_line(response, status)}",
-          status_code: status,
-          request_id: response["x-request-id"],
-          body: response.body,
-        )
+        unless parsed.is_a?(Hash)
+          raise ServerError.new(
+            "malformed response: expected a JSON object from the API, got #{status_line(response, status)}",
+            status_code: status,
+            request_id: response["x-request-id"],
+            body: response.body,
+            parsed_body: parsed,
+            retryable: false,
+          )
+        end
+
+        if require_string && !(parsed[require_string].is_a?(String) && !parsed[require_string].empty?)
+          raise ServerError.new(
+            "malformed response: \"#{require_string}\" is missing",
+            status_code: status,
+            request_id: response["x-request-id"],
+            body: response.body,
+            parsed_body: parsed,
+            retryable: false,
+          )
+        end
+
+        parsed
       end
 
       def build_error(response, status, retry_after)
@@ -198,12 +237,13 @@ module NaijaCloud
             status_code: status,
             request_id: response["x-request-id"],
             body: response.body,
+            parsed_body: parse_json(response.body),
             retryable: false,
           )
         end
 
-        payload = parse_json(response.body)
-        payload = {} unless payload.is_a?(Hash)
+        parsed  = parse_json(response.body)
+        payload = parsed.is_a?(Hash) ? parsed : {}
 
         message = error_message(payload, response, status)
         common  = {
@@ -211,6 +251,7 @@ module NaijaCloud
           error_label: payload["error"],
           request_id: response["x-request-id"],
           body: response.body,
+          parsed_body: parsed,
         }
 
         case status
@@ -237,7 +278,10 @@ module NaijaCloud
           if status >= 500
             ServerError.new(message, **common)
           else
-            Error.new(message, **common)
+            # Any other 4xx (405, 415, 451...): the request as sent will never
+            # succeed, which is what ValidationError means to a caller. Same in
+            # all five SDKs (contract section 3).
+            ValidationError.new(message, **common)
           end
         end
       end

@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-07
+
+Conformance pass across the five Naijamail SDKs (TGL-741). Where they had drifted
+apart, each now does what the SDK contract settles on.
+
+### Changed
+
+- The 10 MiB limit is measured the way the server measures it: the UTF-8 bytes of
+  `html` and `text` plus the raw (decoded) attachment bytes, instead of the whole
+  encoded JSON. Attachments between ~7.5 and 10 MiB are no longer refused locally.
+- Any unmapped 4xx (405, 415, 451…) raises `ValidationError` instead of the base
+  `Error`.
+- A `base_url` with a query string or fragment is refused (it used to be kept,
+  with every request path appended after it).
+- A blank `NAIJAMAIL_BASE_URL` is treated as unset instead of failing
+  construction.
+- An empty `idempotency_key:` generates one, as if it were omitted, instead of
+  raising. The 255 limit is counted in UTF-8 bytes, not characters.
+- An `nc_pat_…` key is refused with a message saying it is a personal access
+  token and which keys to use, instead of "does not look like a Naijamail key".
+- `max_retries` above 10 is refused.
+- `timeout` is now a deadline on the whole attempt (connect, send, and reading
+  the full response), not a per-socket-read timeout.
+- `Webhooks.verify`: a negative or non-numeric `tolerance` raises
+  `ValidationError` (`0` remains strict); `t` must be 1–12 ASCII digits.
+- Forbidden custom headers are matched on the trimmed name, so `" From"` is
+  refused as an override rather than as an invalid name.
+
+### Added
+
+- `Error#raw_body` (the response text, same as `#body`) and `Error#parsed_body`
+  (the JSON-decoded body, or `nil`).
+
+### Fixed
+
+- A `http://[::1]` base URL could not connect: Net::HTTP was given the bracketed
+  host. It now uses the bare address.
+- `Webhooks.verify` accepts upper-case hex signatures.
+- `Webhooks.verify` raises on a verified payload that is not a JSON object (an
+  array used to come back as an empty event).
+- A send response with no `id` raises `ServerError` instead of returning a
+  response whose `id` is `nil`.
+- Text that is not valid UTF-8 raises `ValidationError` instead of
+  `JSON::GeneratorError` or `ArgumentError`.
+
 ## [0.2.0] - 2026-10-04
 
 The first version published to RubyGems (`gem install naijacloud-email`).
@@ -66,5 +111,6 @@ First release. Implements the Naijamail SDK contract for Ruby.
   redirect following, key redaction, header-injection rejection, forbidden
   header names, client-side limits and bytes-only attachments.
 
-[Unreleased]: https://github.com/naijacloud/nc-email-ruby/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/naijacloud/nc-email-ruby/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/naijacloud/nc-email-ruby/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/naijacloud/nc-email-ruby/releases/tag/v0.2.0

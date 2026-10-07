@@ -30,7 +30,14 @@ module NaijaCloud
       MAX_TAGS          = 10
       MAX_TAG_KEY_LEN   = 64
       MAX_TAG_VALUE_LEN = 256
-      MAX_PAYLOAD_BYTES = 10 * 1024 * 1024
+      # Measured the way the server measures it (SendService.assertShape): the
+      # UTF-8 bytes of html and text plus the *decoded* attachment bytes. Not
+      # the encoded JSON -- base64 inflates attachments by a third, and
+      # measuring the JSON refused 7.5-10 MiB attachments the server takes.
+      MAX_MESSAGE_BYTES = 10 * 1024 * 1024
+      # Kept for callers that referenced the old name.
+      MAX_PAYLOAD_BYTES = MAX_MESSAGE_BYTES
+      MAX_IDEMPOTENCY_KEY_BYTES = 255
 
       # Overriding any of these would sidestep the domain authorisation that the
       # From address is checked against, so they are refused before the request is
@@ -115,18 +122,15 @@ module NaijaCloud
         headers = build_headers(params["headers"])
         payload["headers"] = headers unless headers.empty?
 
-        attachments = build_attachments(params["attachments"])
+        raw_attachments = collect_attachments(params["attachments"])
+        check_message_size!(html, text, raw_attachments)
+        attachments = raw_attachments.map { |entry| encode_attachment(entry) }
         payload["attachments"] = attachments unless attachments.empty?
 
         tags = build_tags(params["tags"])
         payload["tags"] = tags unless tags.empty?
 
-        body = JSON.generate(payload)
-        if body.bytesize > MAX_PAYLOAD_BYTES
-          raise ValidationError.new(
-            "encoded message is #{body.bytesize} bytes, over the #{MAX_PAYLOAD_BYTES}-byte limit",
-          )
-        end
+        body = encode_json(payload)
 
         # Generated once, here, and reused by every attempt the transport makes.
         # This is the whole reason retrying a POST is safe: a timeout tells the
@@ -134,7 +138,10 @@ module NaijaCloud
         # stable dedup key the retry that follows mails the customer twice.
         idempotency_key = idempotency_key_for(params["idempotency_key"])
 
-        response = @transport.post("/v1/emails", body, "Idempotency-Key" => idempotency_key)
+        # Header only, never also in the body: the server reads the header first,
+        # so a second copy is redundant and two copies could only disagree.
+        response = @transport.post("/v1/emails", body, { "Idempotency-Key" => idempotency_key },
+                                   require_string: "id")
         SendEmailResponse.from_hash(response)
       end
 
@@ -156,6 +163,25 @@ module NaijaCloud
       end
 
       private
+
+      # A String that is not valid UTF-8 (binary read into an html field, say)
+      # makes JSON.generate raise JSON::GeneratorError -- a local input problem,
+      # so it surfaces as the ValidationError a caller already rescues.
+      def encode_json(payload)
+        JSON.generate(payload)
+      rescue JSON::GeneratorError, EncodingError => e
+        raise ValidationError.new("the message contains text that is not valid UTF-8 (#{e.class})")
+      end
+
+      def check_message_size!(html, text, attachments)
+        size = html.to_s.bytesize + text.to_s.bytesize +
+               attachments.sum { |entry| entry[:content].bytesize }
+        return if size <= MAX_MESSAGE_BYTES
+
+        raise ValidationError.new(
+          "message is #{size} bytes (html + text + attachments), over the #{MAX_MESSAGE_BYTES}-byte limit",
+        )
+      end
 
       def normalize_params(params)
         params = params.to_h if params.respond_to?(:to_h) && !params.is_a?(Hash)
@@ -217,7 +243,10 @@ module NaijaCloud
       end
 
       def check_unsafe!(value, field)
-        return unless value.is_a?(String) && value =~ UNSAFE_CHARS
+        # Matched on the bytes: a String that is not valid UTF-8 would make the
+        # regex raise ArgumentError instead of reaching the ValidationError that
+        # JSON encoding turns it into.
+        return unless value.is_a?(String) && value.b =~ UNSAFE_CHARS
 
         raise ValidationError.new(
           "#{field} contains a line break or NUL, which would inject a mail header",
@@ -240,13 +269,16 @@ module NaijaCloud
           name = name.to_s
           raise ValidationError.new("a header name cannot be empty") if name.empty?
 
-          unless name =~ HEADER_NAME
-            raise ValidationError.new("header name #{name.inspect} is not a valid header name")
-          end
-          if FORBIDDEN_HEADERS.include?(name.downcase)
+          # Checked on the trimmed name, ahead of the token check: the MIME
+          # composer trims header names, so " From" or "Bcc\t" would land as the
+          # real header. Saying "cannot be overridden" names the actual problem.
+          if FORBIDDEN_HEADERS.include?(name.strip.downcase)
             raise ValidationError.new(
               "header #{name.inspect} cannot be overridden; it is set from the message itself",
             )
+          end
+          unless name.b =~ HEADER_NAME
+            raise ValidationError.new("header name #{name.inspect} is not a valid header name")
           end
           unless value.is_a?(String)
             raise ValidationError.new("header #{name.inspect} must have a string value")
@@ -263,7 +295,13 @@ module NaijaCloud
         headers
       end
 
-      def build_attachments(raw)
+      # Validates every attachment and returns { filename:, content:,
+      # content_type:, content_id: } with the raw bytes, so the size check can
+      # count decoded bytes before anything is base64-encoded.
+      #
+      # `content` is a String of raw bytes -- Ruby's byte type (File.binread,
+      # IO#read in binary mode). It is never taken as base64: this SDK encodes.
+      def collect_attachments(raw)
         return [] if raw.nil?
         raise ValidationError.new("attachments must be an Array") unless raw.is_a?(Array)
 
@@ -306,22 +344,21 @@ module NaijaCloud
           end
           raise ValidationError.new("#{label} content is empty") if content.empty?
 
-          built = { "filename" => filename, "content" => base64(content) }
+          content_type = optional_string(entry["content_type"], "#{label} content_type")
+          check_unsafe!(content_type, "#{label} content_type")
 
-          if entry.key?("content_type")
-            content_type = optional_string(entry["content_type"], "#{label} content_type")
-            check_unsafe!(content_type, "#{label} content_type")
-            built["content_type"] = content_type if content_type
-          end
+          content_id = optional_string(entry["content_id"], "#{label} content_id")
+          check_unsafe!(content_id, "#{label} content_id")
 
-          if entry.key?("content_id")
-            content_id = optional_string(entry["content_id"], "#{label} content_id")
-            check_unsafe!(content_id, "#{label} content_id")
-            built["content_id"] = content_id if content_id
-          end
-
-          built
+          { filename: filename, content: content, content_type: content_type, content_id: content_id }
         end
+      end
+
+      def encode_attachment(entry)
+        built = { "filename" => entry[:filename], "content" => base64(entry[:content]) }
+        built["content_type"] = entry[:content_type] if entry[:content_type]
+        built["content_id"]   = entry[:content_id] if entry[:content_id]
+        built
       end
 
       # Strict base64: no line breaks. The server validates the alphabet by hand
@@ -380,13 +417,21 @@ module NaijaCloud
         # A caller-supplied key always wins and is never regenerated: they may be
         # deriving it from an order id precisely so that two independent processes
         # cannot both send the receipt.
+        #
+        # An empty (or blank) key counts as none supplied: one is generated, as
+        # if it had been omitted -- the same in all five SDKs.
         return SecureRandom.uuid if supplied.nil?
 
-        unless supplied.is_a?(String) && !supplied.strip.empty?
-          raise ValidationError.new("idempotency_key must be a non-empty string")
-        end
-        if supplied.length > 255
-          raise ValidationError.new("idempotency_key must be 255 characters or fewer")
+        raise ValidationError.new("idempotency_key must be a string") unless supplied.is_a?(String)
+        return SecureRandom.uuid if supplied.strip.empty?
+
+        # Bytes, not characters: the server stores and compares the header's
+        # bytes, and the limit is the same in every SDK only if it is counted
+        # the same way.
+        if supplied.bytesize > MAX_IDEMPOTENCY_KEY_BYTES
+          raise ValidationError.new(
+            "idempotency_key must be #{MAX_IDEMPOTENCY_KEY_BYTES} bytes of UTF-8 or fewer",
+          )
         end
 
         # It travels as a header, so it gets the same injection check as an address.

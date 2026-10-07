@@ -8,10 +8,8 @@ module NaijaCloud
   module Email
     # Verifies a signed webhook delivery.
     #
-    # Forward-looking: the control plane ingests *provider* webhooks today
-    # (/webhooks/mail/mailgun, /ses) and does not yet deliver customer-facing
-    # events. The scheme is fixed here so both halves ship against the same
-    # definition -- see the README before advertising it to a customer.
+    # The control plane delivers customer-facing event webhooks signed with
+    # exactly this scheme (SDK contract section 6).
     module Webhooks
       SIGNATURE_HEADER  = "NC-Signature"
       DEFAULT_TOLERANCE = 300
@@ -37,10 +35,18 @@ module NaijaCloud
             raise WebhookVerificationError.new("a webhook signing secret is required")
           end
 
+          # A tolerance that is not a finite, non-negative number would make the
+          # replay check meaningless ("abc".to_i is 0, NaN compares false against
+          # everything). 0 is strict -- only the current second passes -- and
+          # never means "use the default".
+          unless tolerance.is_a?(Numeric) && tolerance.real? && tolerance.to_f.finite? && tolerance >= 0
+            raise ValidationError.new("tolerance must be a finite number of seconds, 0 or more")
+          end
+
           timestamp, signatures = parse_header(signature_header)
 
           age = (Time.now.to_i - timestamp).abs
-          if age > tolerance.to_i
+          if age > tolerance
             # This is the whole point of signing the timestamp: without it a
             # captured delivery stays valid forever and can be replayed.
             raise WebhookVerificationError.new(
@@ -73,6 +79,13 @@ module NaijaCloud
             raise WebhookVerificationError.new("signature is valid but the payload is not JSON: #{e.class}")
           end
 
+          # An array, string or number is valid JSON but not an event; turning it
+          # into an empty WebhookEvent would hand the caller a blank event they
+          # might act on.
+          unless parsed.is_a?(Hash)
+            raise WebhookVerificationError.new("signature is valid but the payload is not a JSON object")
+          end
+
           WebhookEvent.from_hash(parsed)
         end
 
@@ -93,11 +106,15 @@ module NaijaCloud
 
             case name
             when "t"  then timestamp = value
-            when "v1" then signatures << value
+            # Hex is case-insensitive; the expected digest is lower-case.
+            when "v1" then signatures << value.downcase
             end
           end
 
-          unless timestamp =~ /\A\d{1,20}\z/
+          # 1-12 ASCII digits and nothing else (contract section 6): no sign, no
+          # underscore, no exponent, and bounded so it can never be a huge
+          # Integer.
+          unless timestamp.is_a?(String) && timestamp.b =~ /\A[0-9]{1,12}\z/
             raise WebhookVerificationError.new("#{SIGNATURE_HEADER} has no usable timestamp")
           end
           if signatures.empty?
