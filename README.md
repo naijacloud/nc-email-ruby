@@ -92,8 +92,8 @@ nm.emails.send_email({ from: "...", to: "...", subject: "Hi" })
 | `to:` | String or Array | **required.** At least one. |
 | `cc:`, `bcc:` | String or Array | |
 | `reply_to:` | String or Array | Sent on the wire as `reply_to`. |
-| `subject:` | String | Always sent; defaults to `""`. |
-| `html:`, `text:` | String | |
+| `subject:` | String | **required.** The API refuses a missing or blank subject with a 400 `subject is required`. |
+| `html:`, `text:` | String | At least one is **required** (400 `provide html, text, or both`); send both for the best inbox placement. |
 | `headers:` | Hash | At most 25. `From`, `To`, `Cc`, `Bcc`, `Subject`, `DKIM-Signature` and `Received` are refused, matched case-insensitively on the name with surrounding whitespace trimmed (`" From"` is refused too). |
 | `attachments:` | Array of Hashes | `{ filename:, content:, content_type:, content_id: }`. `content` is a String of **raw bytes**; it must not be empty. |
 | `tags:` | Hash | At most 10, key ≤ 64 chars, value ≤ 256. |
@@ -195,7 +195,8 @@ Two kinds work, and the SDK cannot tell them apart once it has one:
   staging and CI. Send from any domain you have added, or from
   `…@test.mail.naijacloud.dev`; send *to* `delivered@`, `bounced@` or
   `complained@test.mail.naijacloud.dev` to get that outcome. A message sent
-  this way comes back from `get` with `sandbox` set to true. There is no test
+  this way has `sandbox` set to true in the send response and when you `get`
+  it back. There is no test
   variant of a workspace key.
 
 An `nc_pat_…` platform token is not accepted: those predate the Email send scope

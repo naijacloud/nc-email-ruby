@@ -79,7 +79,7 @@ module NaijaCloud
 
     # The 202 body from POST /v1/emails.
     class SendEmailResponse < BaseObject
-      attr_reader :id, :status, :rejected
+      attr_reader :id, :status, :rejected, :sandbox
 
       def self.from_hash(hash)
         hash = {} unless hash.is_a?(::Hash)
@@ -95,11 +95,19 @@ module NaijaCloud
         # `resp.rejected&.any?` -- and so nobody reads the absent key as an error.
         rejected = raw["rejected"]
         @rejected = (rejected.is_a?(::Array) ? rejected : []).map { |r| RejectedRecipient.from_hash(r) }.freeze
+        # True when the send used a test key (nmail_test_...): accepted and
+        # recorded, never handed to a mail server. The same flag Email#sandbox
+        # carries, so a test send is recognisable without a second request.
+        @sandbox = raw["sandbox"] == true
+      end
+
+      def sandbox?
+        @sandbox
       end
 
       def inspect
         "#<NaijaCloud::Email::SendEmailResponse id=#{id.inspect} status=#{status.inspect} " \
-          "rejected=#{rejected.length}>"
+          "rejected=#{rejected.length} sandbox=#{sandbox.inspect}>"
       end
     end
 
@@ -171,9 +179,10 @@ module NaijaCloud
 
     # A verified webhook delivery.
     #
-    # The envelope (id / type / created_at / data) is fixed by the SDK contract
-    # section 6; the control plane does not emit these yet, so treat the fields
-    # inside `data` as provisional and read anything else through `#raw`.
+    # Naija Cloud delivers these, signed, to the endpoints you register. The
+    # envelope (id / type / created_at / data) is fixed by the SDK contract
+    # section 6; event payloads can gain fields, so read anything not exposed
+    # here through `#raw`.
     class WebhookEvent < BaseObject
       attr_reader :id, :type, :created_at, :data
 

@@ -86,7 +86,7 @@ module NaijaCloud
         @emails = Emails.new(@http)
       end
 
-      # The one resource. Two endpoints, because the server has two.
+      # The one resource: send and retrieve. The API's other routes are REST-only for now.
       attr_reader :emails
 
       # Both overridden, and neither mentions @api_key.
