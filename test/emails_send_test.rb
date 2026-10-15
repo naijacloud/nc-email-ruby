@@ -22,6 +22,7 @@ class EmailsSendTest < NaijamailTest
     assert_equal "5b1e0000", sent.id
     assert_equal NaijaCloud::Email::MessageStatus::QUEUED, sent.status
     assert_equal [], sent.rejected
+    refute sent.sandbox?
 
     request = @server.last_request
     assert_equal "POST", request[:method]
@@ -131,6 +132,15 @@ class EmailsSendTest < NaijamailTest
     assert_equal 1, sent.rejected.length
     assert_equal "x@y.com", sent.rejected.first.address
     assert_equal "suppressed", sent.rejected.first.reason
+  end
+
+  def test_the_sandbox_flag_of_a_test_key_send_is_exposed
+    @server.enqueue(status: 202, body: { "id" => "m1", "status" => "queued", "sandbox" => true })
+
+    sent = @client.emails.send_email(from: "a@acme.com", to: "b@example.com", subject: "Hi")
+
+    assert sent.sandbox?
+    assert_equal true, sent.sandbox
   end
 
   def test_rejected_is_an_empty_array_when_the_server_omits_it

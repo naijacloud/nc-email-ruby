@@ -2,11 +2,8 @@
 
 # Verifying a Naijamail webhook in Rails.
 #
-# NOTE: the control plane does not emit customer-facing event webhooks yet. It
-# ingests provider webhooks (Mailgun, SES) today. The scheme below is fixed in
-# the SDK contract so both halves ship against the same definition -- the
-# verifier is real and tested, but nothing is sending you events yet. Do not
-# build a production flow on it until the endpoint is announced.
+# Naija Cloud delivers events to the endpoints you register, each signed with
+# the NC-Signature header this controller verifies.
 #
 # Runnable as a demonstration of the verifier, with no Rails and no network:
 #

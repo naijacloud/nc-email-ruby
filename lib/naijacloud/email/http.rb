@@ -162,12 +162,43 @@ module NaijaCloud
         # this file. Our policy is the only one.
         http.max_retries = 0
 
+        # net/http returns a body cut short of its Content-Length as if it were
+        # whole (ignore_eof defaults to true, and before net-http 0.2 it cannot
+        # be changed at all). A link dropped mid-response would then surface as
+        # a non-retryable "malformed response" for a send the API had accepted.
+        # Turned off where supported, and checked by hand in
+        # `read_complete_body` everywhere else, so a short body raises EOFError,
+        # which `execute` maps to a retryable ConnectionError; the retry carries
+        # the same Idempotency-Key, so it returns the original id (TGL-1157).
+        http.ignore_eof = false if http.respond_to?(:ignore_eof=)
+
         # Never call http.set_debug_output: it writes every header, including
         # Authorization, to whatever IO it is given. There is deliberately no
         # verbose mode in this gem for that reason.
 
         request = build_request(method, uri, body, extra_headers)
-        http.start { |conn| conn.request(request) }
+        http.start do |conn|
+          conn.request(request) { |response| read_complete_body(response) }
+        end
+      end
+
+      # Reads the body and raises EOFError when it is shorter than the
+      # Content-Length the server promised. Only an identity-encoded,
+      # non-chunked body is measured: a gzip body's Content-Length counts the
+      # compressed bytes, and a chunked one carries no length to compare.
+      def read_complete_body(response)
+        expected = response["content-length"]
+        encoding = response["content-encoding"].to_s.strip.downcase
+        body = response.read_body
+        return if body.nil? || expected.nil? || response.chunked?
+        return unless encoding.empty? || encoding == "identity"
+        return unless expected.to_s.strip.match?(/\A\d+\z/)
+
+        received = body.bytesize
+        wanted   = expected.to_i
+        return if received >= wanted
+
+        raise EOFError, "connection closed after #{received} of #{wanted} response bytes"
       end
 
       def build_request(method, uri, body, extra_headers)

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-15
+
+### Fixed
+
+- A connection cut mid-response (a body shorter than its `Content-Length`) is a
+  retryable `ConnectionError`, retried with the same `Idempotency-Key`, instead
+  of a non-retryable "malformed response" `ServerError` for a send the API had
+  accepted. This matches the other four SDKs (TGL-1157).
+- `emails.send_email` returns the `sandbox` flag the API sends
+  (`SendEmailResponse#sandbox` / `#sandbox?`), so a test-key send is
+  recognisable without a second `get` (TGL-1155).
+- The README and doc comments say what the API enforces: `subject` is required
+  and at least one of `html`/`text` must be given. They no longer claim the API
+  has two endpoints or that Naija Cloud sends no webhooks (TGL-1156).
+
 ## [0.3.0] - 2026-10-07
 
 Conformance pass across the five Naijamail SDKs (TGL-741). Where they had drifted
@@ -111,6 +126,7 @@ First release. Implements the Naijamail SDK contract for Ruby.
   redirect following, key redaction, header-injection rejection, forbidden
   header names, client-side limits and bytes-only attachments.
 
-[Unreleased]: https://github.com/naijacloud/nc-email-ruby/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/naijacloud/nc-email-ruby/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/naijacloud/nc-email-ruby/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/naijacloud/nc-email-ruby/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/naijacloud/nc-email-ruby/releases/tag/v0.2.0

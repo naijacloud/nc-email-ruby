@@ -15,11 +15,11 @@ end
 
 module NaijaCloud
   module Email
-    # The `emails` resource: the two endpoints the control plane actually has.
+    # The `emails` resource: send one message and read one back.
     #
-    # There is no domains, api-keys, batch or contacts resource here. Those exist
-    # in other vendors' SDKs and not in ours because they do not exist server-side
-    # -- an SDK method that returns 404 for everyone is worse than no method.
+    # The API has more routes (batch send, list, limits, domains and
+    # suppressions; see https://naijacloud.com/docs/api/email). They are
+    # REST-only for now; this gem wraps the two every integration needs.
     class Emails
       # Mirrors SENDING_LIMITS in nc-control-plane/src/mail/mail.constants.ts.
       # Checked locally so a caller with 200 recipients gets an immediate,

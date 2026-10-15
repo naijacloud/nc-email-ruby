@@ -209,6 +209,38 @@ class RetryTest < NaijamailTest
     assert_match(/\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/, keys.first)
   end
 
+  def test_a_connection_cut_mid_response_is_retried_with_the_same_key
+    # 202 headers promising 500 bytes, then 11 bytes and a closed socket: a
+    # mobile or proxy link dropping mid-response. It must be a retryable
+    # ConnectionError, not a "malformed response" for a send that was accepted.
+    @server.enqueue(
+      raw: "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\n" \
+           "Content-Length: 500\r\nConnection: close\r\n\r\n{\"id\":\"5b1e",
+    )
+    @server.enqueue(status: 202, body: { "id" => "5b1e0000", "status" => "queued" })
+
+    sent = send_one
+
+    assert_equal "5b1e0000", sent.id
+    assert_equal 2, @server.request_count
+    keys = @server.requests.map { |request| request[:headers]["idempotency-key"] }
+    assert_equal 1, keys.uniq.length
+    refute_nil keys.first
+  end
+
+  def test_a_truncated_body_with_no_retries_left_is_a_connection_error
+    client = build_client(max_retries: 0)
+    @server.enqueue(
+      raw: "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\n" \
+           "Content-Length: 500\r\nConnection: close\r\n\r\n{\"id\":\"5b1e",
+    )
+
+    error = assert_raises(NaijaCloud::Email::ConnectionError) do
+      client.emails.send_email(from: "a@acme.com", to: "b@example.com", subject: "Hi")
+    end
+    assert error.retryable?
+  end
+
   def test_two_calls_get_different_idempotency_keys
     2.times { @server.enqueue(status: 202, body: { "id" => "m1", "status" => "queued" }) }
 
